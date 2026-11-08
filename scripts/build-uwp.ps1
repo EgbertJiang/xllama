@@ -22,6 +22,10 @@
 param(
     [string]$Configuration  = "Release",
     [string]$Platform       = "x64",
+    # Baseline avoids AVX2/BMI2 in both the app and ggml. This is experimental
+    # Xbox One compatibility, not a claim that vendor DLLs/models are validated.
+    [ValidateSet("AVX2", "AVX", "Baseline")]
+    [string]$CpuTarget      = "AVX2",
     [switch]$ForceNewCert   = $false,
     # 'ort' (default): ORT GenAI only. 'llamacpp': ggml/llama CPU backend only
     # (XLLAMA_USE_ORT absent). 'unified': BOTH backends compiled, chosen at
@@ -220,6 +224,7 @@ $MsBuildArgs = @(
     $SlnPath,
     "/p:Configuration=$Configuration",
     "/p:Platform=$Platform",
+    "/p:XllamaCpuTarget=$CpuTarget",
     "/p:AppxPackageSigningEnabled=true",
     "/p:PackageCertificateKeyFile=$PfxPath",
     "/p:PackageCertificatePassword=$CertPwd",
@@ -239,7 +244,7 @@ if ($Backend -ne "ort") {
     # ProjectReference path but does not build the lib itself (LNK1181).
     $GgmlProj = Join-Path $RepoRoot "uwp/ggml-uwp.vcxproj"
     Write-Host "Pre-building ggml-uwp.vcxproj ($Configuration|$Platform) ..."
-    & $MsBuild $GgmlProj "/p:Configuration=$Configuration" "/p:Platform=$Platform" "/m" "/nologo"
+    & $MsBuild $GgmlProj "/p:Configuration=$Configuration" "/p:Platform=$Platform" "/p:XllamaCpuTarget=$CpuTarget" "/m" "/nologo"
     if ($LASTEXITCODE -ne 0) {
         Write-Error "ggml-uwp build failed ($LASTEXITCODE)"
         exit $LASTEXITCODE

@@ -19,6 +19,7 @@
 
     #include "inference-bridge.h"
     #include "model-downloader.h"
+    #include "web-chat.generated.h"
     #include "xllama/api_policy.h"
     #include "xllama/api_pull_policy.h"
     #include "xllama/chat_prompt.h"
@@ -337,6 +338,7 @@ std::string error_json(const std::string& msg) {
 // runs is picked up on its first request; models genuinely absent from the
 // catalogue re-read once per request, exactly as every request did before.
 struct CatalogueSessionPolicy {
+    int gpu_layers = 0;
     int n_ctx = ::xllama::kDefaultNCtx;
     bool coding = false;
     bool gguf = false;
@@ -357,6 +359,7 @@ CatalogueSessionPolicy catalogue_session_policy(const std::string& model) {
         p.coding = ::xllama::role_is_coding(::xllama::wstring_to_utf8(entry->role));
         p.embedding = ::xllama::role_is_embedding(::xllama::wstring_to_utf8(entry->role));
         p.gguf = entry->kind == L"gguf";
+        p.gpu_layers = entry->gpu_layers;
     }
     return p;
 }
@@ -452,8 +455,10 @@ std::string handle_chat_locked(const std::string& body, const char*& status) {
         ::xllama::SessionParams sp;
         sp.model_path = model;
         sp.n_ctx = policy.n_ctx;
-        if (policy.gguf)
+        if (policy.gguf) {
             sp.backend = ::xllama::Backend::LlamaCpp;
+            sp.n_gpu_layers = policy.gpu_layers;
+        }
         session = ::xllama::session_hub().ensure_locked(model, sp, &err);
         if (!session) {
             status = "500 Internal Server Error";
@@ -587,17 +592,24 @@ std::string current_model_id() {
 std::vector<std::string> servable_model_ids() {
     std::vector<std::string> ids;
     std::error_code ec;
-    const std::filesystem::path root = ::xllama::resolve_local_path("models");
-    for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-        if (!entry.is_directory(ec))
-            continue;
-        std::vector<std::string> files;
-        for (const auto& f : std::filesystem::directory_iterator(entry.path(), ec))
-            files.push_back(f.path().filename().string());
-        if (::xllama::model_dir_files_ready(files))
-            ids.push_back(entry.path().filename().string());
+    std::vector<std::filesystem::path> roots{::xllama::resolve_models_directory()};
+    const std::filesystem::path legacy = ::xllama::resolve_local_path("models");
+    if (roots.front() != legacy)
+        roots.push_back(legacy);
+    for (const auto& root : roots) {
+        ec.clear();
+        for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+            if (!entry.is_directory(ec))
+                continue;
+            std::vector<std::string> files;
+            for (const auto& f : std::filesystem::directory_iterator(entry.path(), ec))
+                files.push_back(f.path().filename().string());
+            if (::xllama::model_dir_files_ready(files))
+                ids.push_back(entry.path().filename().string());
+        }
     }
     std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
     const std::string current = current_model_id();
     if (!current.empty() && std::find(ids.begin(), ids.end(), current) == ids.end())
         ids.push_back(current);
@@ -785,8 +797,10 @@ std::string handle_embedding_locked(const std::string& body, const char*& status
     ::xllama::SessionParams sp;
     sp.model_path = model;
     sp.n_ctx = policy.n_ctx;
-    if (policy.gguf)
+    if (policy.gguf) {
         sp.backend = ::xllama::Backend::LlamaCpp;
+        sp.n_gpu_layers = policy.gpu_layers;
+    }
     if (root.HasKey(L"options") &&
         root.GetNamedValue(L"options").ValueType() != JsonValueType::Object) {
         status = "400 Bad Request";
@@ -1107,7 +1121,8 @@ std::string handle_images_locked(const std::string& body, const char*& status) {
 
 bool same_pull_manifest_entry(const ::xllama::ManifestEntry& a, const ::xllama::ManifestEntry& b) {
     if (a.name != b.name || a.kind != b.kind || a.role != b.role ||
-        a.hf_base_url != b.hf_base_url || a.n_ctx != b.n_ctx || a.files.size() != b.files.size())
+        a.hf_base_url != b.hf_base_url || a.n_ctx != b.n_ctx || a.gpu_layers != b.gpu_layers ||
+        a.files.size() != b.files.size())
         return false;
     for (size_t i = 0; i < a.files.size(); ++i) {
         const auto& x = a.files[i];
@@ -1348,6 +1363,17 @@ void handle_connection(StreamSocket const& socket, uint64_t generation) {
         // CORS preflight for browser clients (Continue.dev webview, web UIs).
         if (req.method == "OPTIONS") {
             write_cors_preflight(socket);
+            return;
+        }
+
+        // Same-origin browser UI; preserve JSON health probes for existing clients.
+        if (req.method == "GET" && (req.path == "/chat" || req.path == "/chat/")) {
+            const std::string page(kWebChatHtml);
+            std::string response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n";
+            response += "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n";
+            response += "Content-Length: " + std::to_string(page.size());
+            response += "\r\nConnection: close\r\n\r\n" + page;
+            write_raw(socket, response);
             return;
         }
 

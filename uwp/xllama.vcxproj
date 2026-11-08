@@ -76,6 +76,7 @@
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="cpu-target.props" />
 
   <!-- NuGet props — imported AFTER Microsoft.Cpp.props so $(IntDir) and
        $(GeneratedFilesDir) are already resolved when CppWinRT.props runs. -->
@@ -117,6 +118,7 @@
         $(ProjectDir)..\shaders\generated;
         $(ProjectDir)..\llama.cpp\include;
         $(ProjectDir)..\llama.cpp\ggml\include;
+        $(ProjectDir)..\llama.cpp\ggml\src;
         $(ProjectDir)packages\Microsoft.ML.OnnxRuntimeGenAI.DirectML.0.14.1\build\native\include;
         $(ProjectDir)packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.4\build\native\include;
         %(AdditionalIncludeDirectories)
@@ -165,7 +167,7 @@
         %(AdditionalLibraryDirectories)
       </AdditionalLibraryDirectories>
       <!-- d3d12.dll is LoadLibrary'd at first GPU path use (d3d12_dyn.h); no hard import. -->
-      <AdditionalDependencies>WindowsApp.lib;Bcrypt.lib;onnxruntime.lib;onnxruntime-genai.lib;dxgi.lib;d3d11.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>WindowsApp.lib;bcrypt.lib;onnxruntime.lib;onnxruntime-genai.lib;dxgi.lib;d3d11.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 
@@ -186,7 +188,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalOptions>/arch:AVX2 /Oi /Ot %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(XllamaArchOption) /Oi /Ot %(AdditionalOptions)</AdditionalOptions>
       <WholeProgramOptimization>true</WholeProgramOptimization>
     </ClCompile>
     <Link>
@@ -323,6 +325,8 @@
     <ClCompile Include="..\src\bridge\membw.cpp" />
     <ClCompile Include="..\src\bridge\gpubw.cpp" />
     <ClCompile Include="..\src\bridge\gpugemv.cpp" />
+    <ClCompile Include="..\src\bridge\d3d12_compute.cpp" />
+    <ClCompile Include="..\src\bridge\ggml_d3d12.cpp" />
     <ClCompile Include="..\src\bridge\ramceil.cpp" />
     <ClCompile Include="..\src\bridge\platform.cpp" />
     <ClCompile Include="..\src\bridge\path_utils.cpp" />

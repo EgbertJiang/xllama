@@ -12,6 +12,7 @@
     #include "xllama/catalog_trust.h"
     #include "xllama/manifest_merge.h"
     #include "xllama/model_provision.h"
+    #include "xllama/path_utils.h"
     #include "xllama/platform.h"
     #include "xllama/utf8_utils.h"
 
@@ -652,6 +653,10 @@ std::vector<ManifestEntry> parse_manifest(winrt::hstring const& text) {
         e.lora_scale = obj.GetNamedNumber(L"lora_scale", 1.0);
         // 0 / absent → shipping default at session open (resolve_n_ctx).
         e.n_ctx = static_cast<int>(obj.GetNamedNumber(L"n_ctx", 0));
+        const double gpu_layers = obj.GetNamedNumber(L"gpu_layers", 0);
+        if (gpu_layers >= 0 && gpu_layers <= 999 &&
+            gpu_layers == static_cast<int>(gpu_layers))
+            e.gpu_layers = static_cast<int>(gpu_layers);
         // 0 / absent → keep Settings / UI n_predict (global default 512).
         e.n_predict = static_cast<int>(obj.GetNamedNumber(L"n_predict", 0));
         e.role = obj.GetNamedString(L"role", L"");
@@ -765,14 +770,20 @@ bool IsModelProvisioned(std::wstring const& model_name,
         return false;
 
     auto local = ApplicationData::Current().LocalFolder();
-    std::wstring local_dir = std::wstring(local.Path().c_str()) + L"\\models\\" + model_name;
+    const std::wstring primary = utf8_to_wstring(resolve_models_directory()) + L"\\" + model_name;
+    const std::wstring legacy = std::wstring(local.Path().c_str()) + L"\\models\\" + model_name;
+    std::vector<std::wstring> local_dirs{primary};
+    if (primary != legacy)
+        local_dirs.push_back(legacy);
     // The .complete marker is a fast-path ONLY in loose mode: in expected mode a
     // stale-quant dir can still carry a valid old marker — exactly what defeats
     // auto-upgrade — so the expected-file scan is authoritative there.
-    if (expected_files.empty() && ModelDownloader::IsComplete(local_dir))
-        return true;
-    if (dir_provisioned(std::filesystem::path(local_dir), expected_files))
-        return true;
+    for (const auto& local_dir : local_dirs) {
+        if (expected_files.empty() && ModelDownloader::IsComplete(local_dir))
+            return true;
+        if (dir_provisioned(std::filesystem::path(local_dir), expected_files))
+            return true;
+    }
 
     try {
         auto pkg = winrt::Windows::ApplicationModel::Package::Current();

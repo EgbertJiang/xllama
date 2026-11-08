@@ -271,6 +271,23 @@ TEST_CASE("gemma render merges system into the first user turn, no bos/system") 
     CHECK(p.find("<bos>") == std::string::npos);
     CHECK(p.find("system") == std::string::npos);
     CHECK(f.gen_suffix.empty());
+
+    // Gemma 4 uses new turn delimiters and its own system turn. Keep older
+    // Gemma behaviour above as a regression check.
+    for (const char* id :
+         {"gemma4-e4b-q3ks", "Gemma-4-E4B-it-Q3_K_S.gguf", "C:\\models\\gemma_4-e2b.gguf"}) {
+        const ChatFormat g4 = chat_format_for(id);
+        CHECK(g4.render_prompt("Be nice.", {{"u1", "a1"}}, "u2") ==
+              "<|turn>system\nBe nice.<turn|>\n"
+              "<|turn>user\nu1<turn|>\n<|turn>model\na1<turn|>\n"
+              "<|turn>user\nu2<turn|>\n<|turn>model\n");
+        CHECK(g4.render_system_prefix("Be nice.") == "<|turn>system\nBe nice.<turn|>\n");
+        CHECK(g4.render_prompt("", {}, "hello") ==
+              "<|turn>system\n<turn|>\n<|turn>user\nhello<turn|>\n<|turn>model\n");
+        CHECK(g4.stop_sequences == std::vector<std::string>{"<turn|>"});
+        CHECK(g4.gen_suffix.empty());
+    }
+    CHECK(chat_format_for("/cache/gemma4/lfm25-350m.gguf").kind == ChatFormatKind::ChatML);
 }
 
 TEST_CASE("gemma multi-turn merges system only into the first user turn") {
@@ -377,6 +394,7 @@ static void check_kv_reuse_invariant(const ChatFormat& f) {
 TEST_CASE("kv-reuse invariant holds for chatml, gemma, llama3, and phi3") {
     check_kv_reuse_invariant(chat_format_for("smollm2-360m-cpu-int4"));
     check_kv_reuse_invariant(chat_format_for("gemma3-270m"));
+    check_kv_reuse_invariant(chat_format_for("gemma4-e4b-q3ks"));
     check_kv_reuse_invariant(chat_format_for("llama32-3b"));
     check_kv_reuse_invariant(chat_format_for("phi35-mini"));
 }
@@ -386,7 +404,7 @@ TEST_CASE("render_system_prefix is the exact head of render_prompt (#169)") {
     // DedicatedTurn formats: the prefix must be byte-identical to what
     // render_prompt emits before the first user turn — a context shift pins
     // exactly its token count.
-    for (const char* id : {"smollm2-360m-cpu-int4", "llama32-3b", "phi35-mini"}) {
+    for (const char* id : {"smollm2-360m-cpu-int4", "llama32-3b", "phi35-mini", "gemma4-e4b"}) {
         const ChatFormat f = chat_format_for(id);
         const std::string prefix = f.render_system_prefix(sys);
         CHECK(!prefix.empty());

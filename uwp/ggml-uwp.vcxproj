@@ -52,6 +52,7 @@
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <Import Project="cpu-target.props" />
   <PropertyGroup>
     <GgmlVersionDir>$([System.IO.Path]::Combine('$(ProjectDir)', '$(IntDir)', 'generated'))</GgmlVersionDir>
   </PropertyGroup>
@@ -105,7 +106,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
-      <AdditionalOptions>/arch:AVX2 /Oi /Ot /utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>$(XllamaArchOption) /Oi /Ot /utf-8 /bigobj %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
   </ItemDefinitionGroup>
 

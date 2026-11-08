@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Add a native inference-service sidebar beside console chat: persistent
+  listener control, detected LAN addresses, resident model/context and configured
+  GPU policy. Refresh snapshots without waiting on active inference; move the
+  console composer below the answer area and preserve existing tools. Add
+  keyboard Enter/Shift+Enter handling with an IME composition guard and checked
+  local draft persistence/restoration.
+
+- Serve a self-contained browser chat at `/chat` from the existing LAN API.
+  Reuse model discovery and non-streaming completion routes; retain browser
+  conversation/drafts and provide last-prompt editing, retry and clear.
+
+- Add experimental native D3D12 GGUF hybrid inference, including One S FXC
+  cs_5_1 shaders and backend API 2 compatibility. Catalogue `gpu_layers`
+  controls GUI/API placement; default zero preserves CPU. Actual One S LFM
+  results and limitations are recorded in `docs/gguf-gpu-decode.md`.
+
+- Allow a Dev Mode `models-root.txt` to select a pre-provisioned model directory
+  on expanded developer storage. Share availability checks with API discovery;
+  keep LocalState models and application-owned download/import destinations.
+- Mirror llama.cpp loader diagnostics into the UWP app log so memory allocation
+  and model-format failures remain inspectable through Device Portal.
+
+- Finish the `EnsureModelAsync` fire-and-forget wrapper with `co_return`; without
+  a coroutine statement it fell off a non-void function, trapping after model
+  provisioning under Clang before the window was activated.
+- Add experimental `-CpuTarget Baseline` and `AVX` UWP options shared by the app
+  and ggml for CPUs without AVX2/BMI2. The default remains AVX2 for Series S/X;
+  A Linux cross-build starts and generates with LFM2.5-350M on the tested One S;
+  larger-model memory and performance require separate validation.
+- Use Gemma 4 turn delimiters and a dedicated system role instead of the Gemma 3
+  template. Preserve older Gemma prompts and cover Gemma 4 multi-turn/KV reuse.
+- Make deployment Base64 encoding work with macOS tools. Reuse the deployment
+  client's checked stop/start operations in the benchmark runner instead of
+  discarding failed requests and potentially reading stale results.
+
 ## [1.6.0.0] - 2026-09-28
 
 Local embeddings and catalogue-backed Ollama pulls, with one resident session

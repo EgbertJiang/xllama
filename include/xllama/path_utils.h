@@ -17,6 +17,11 @@ namespace xllama {
 // Resolve a model filename: UWP -> LocalFolder\models\<filename>
 std::string resolve_model_path(const std::string& filename);
 
+// Primary root for pre-provisioned models. UWP defaults to LocalFolder\models. Dev builds can
+// select an absolute directory with LocalState\models-root.txt (restart to
+// apply); existing models in the default directory remain readable.
+std::string resolve_models_directory();
+
 // Resolve a generic filename: UWP -> LocalFolder\<filename>
 std::string resolve_local_path(const std::string& filename);
 

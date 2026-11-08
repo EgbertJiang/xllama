@@ -41,6 +41,9 @@ void run_gpubw();
 // on partial PSO failure). Soft G2 40 GB/s packed, K1=8; not a product backend.
 void run_gpugemv();
 
+// Own GGUF D3D12 backend selftest: d3d12be.flag -> d3d12be-result.csv(.done).
+void run_d3d12_selftest();
+
 // Heap-ceiling probe. Triggered by LocalFolder\ramceil.flag; writes
 // ramceil-result.csv (+ .done marker holding the stop reason) to LocalState.
 // Measures how much heap the process can actually commit under GameOS — the

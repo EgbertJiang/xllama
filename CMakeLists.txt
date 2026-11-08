@@ -60,6 +60,8 @@ add_subdirectory(llama.cpp)
 add_library(xllama STATIC
     src/bridge/inference.cpp
     src/bridge/session.cpp
+    src/bridge/d3d12_compute.cpp
+    src/bridge/ggml_d3d12.cpp
     src/bridge/embedding.cpp
     src/bridge/kv_store.cpp
     src/bridge/bench.cpp
@@ -98,6 +100,7 @@ target_include_directories(xllama PUBLIC
 # AOT DXIL blobs for Phase 15 gpubw (#211) / gpugemv (#228); host builds do not link D3D12.
 target_include_directories(xllama PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders/generated
+    ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/ggml/src
 )
 
 target_link_libraries(xllama PUBLIC llama)

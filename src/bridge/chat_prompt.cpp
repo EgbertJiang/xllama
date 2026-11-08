@@ -170,7 +170,24 @@ ChatFormat chat_format_for(const std::string& model_id) {
     // Gemma / Llama-3 / Phi-3 before the ChatML default. Substrings do not
     // collide with smollm2 / lfm2 / qwen ids. BOS is added by the tokenizer
     // (add_bos) for Gemma and Llama-3 GGUF — not emitted in the template string.
-    if (model_is_gemma(model_id)) {
+    const std::string basename = to_lower(model_basename(model_id));
+    const bool gemma4 = basename.find("gemma4") != std::string::npos ||
+                        basename.find("gemma-4") != std::string::npos ||
+                        basename.find("gemma_4") != std::string::npos;
+    if (gemma4) {
+        // Gemma 4 changed the turn tokens and added a dedicated system role.
+        // E2B/E4B non-thinking generation ends at the plain model header.
+        f.kind = ChatFormatKind::Gemma;
+        f.turn_open = "<|turn>";
+        f.turn_close = "<turn|>\n";
+        f.role_sep = "\n";
+        f.user_tag = "user";
+        f.assistant_tag = "model";
+        f.system_tag = "system";
+        f.system_sep = "";
+        f.system_style = SystemStyle::DedicatedTurn;
+        f.stop_sequences = {"<turn|>"};
+    } else if (model_is_gemma(model_id)) {
         f.kind = ChatFormatKind::Gemma;
         f.turn_open = "<start_of_turn>";
         f.turn_close = "<end_of_turn>\n";

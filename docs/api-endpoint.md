@@ -48,11 +48,33 @@ this is Dev Mode research, not a hosted service.
 > only _same-host_ sockets, so no `CheckNetIsolation` loopback exemption is needed for
 > requests coming **from another LAN device** (only for a localhost client on the console).
 
+## Browser chat
+
+Open `http://<ip-xbox>:<port>/chat` from the Mac browser while xllama remains
+foregrounded on the Xbox. The self-contained page is served by the console;
+no separate Mac server, CDN or cloud API is used. It discovers provisioned
+models, submits multi-turn text to the existing non-streaming completion route,
+and displays actual request duration and token usage. Model changes take effect
+on the next explicit message.
+
+Messages and unsent drafts are saved in that browser's localStorage. Reload
+restores text without sending anything; an interrupted request is marked
+unconfirmed because closing the browser does not cancel console generation.
+The last prompt can be edited and resubmitted, and Clear removes local history
+and draft after confirmation. Neither operation changes model files. The token
+limit is 16–256 (default 128); the existing backend context-fitting policy may
+omit older turns. This is text chat only.
+
+`uwp/web/chat.html` is the owning page source. After editing it, run
+`python3 scripts/embed-web-chat.py` to regenerate the compiled UWP header.
+The `/` and `/health` probes retain their original JSON responses.
+
 ## Protocol (v1)
 
 | Method    | Path                     | Behaviour                                                                                                                                         |
 | --------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`     | `/` or `/health`         | `200 {"status":"ok","service":"xllama"}` — the spike/liveness probe.                                                                              |
+| `GET`     | `/chat`                  | Self-contained browser text chat using the same-origin completion API. |
 | `GET`     | `/v1/models`             | OpenAI model discovery — every servable on-device model; non-standard `"active": true` marks the one currently loaded.                            |
 | `GET`     | `/api/tags`              | Ollama model discovery — same list, Ollama shape.                                                                                                 |
 | `POST`    | `/api/pull`              | Pull a trusted catalogue chat/embedding model with Ollama-style NDJSON progress; load it when complete.                                           |

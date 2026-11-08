@@ -63,6 +63,7 @@ class MainPageController : public std::enable_shared_from_this<MainPageControlle
     void ApTrackDialog(winrt::Windows::UI::Xaml::Controls::ContentDialog const& dlg);
     bool ApWaitAtomic(std::atomic<bool>& flag, bool want, std::chrono::seconds timeout);
     void BuildUI();
+    void SavePromptDraft();
     void LoadModelName();
     bool SelectModel(const std::wstring& name);
     winrt::fire_and_forget EnsureModelAsync();
@@ -124,6 +125,7 @@ class MainPageController : public std::enable_shared_from_this<MainPageControlle
     winrt::fire_and_forget ShowSettings();
     #ifndef XLLAMA_STORE_SKU
     void ApplyApiSettings(bool enabled, int port);
+    void RefreshServicePanel();
     #endif
     // Phase 11 (#116): in-app personalization — train on samples.jsonl, publish
     // merged.gguf as catalogue entry "personalized".
@@ -152,11 +154,23 @@ class MainPageController : public std::enable_shared_from_this<MainPageControlle
 
     // UI controls (populated by BuildUI)
     winrt::Windows::UI::Xaml::Controls::Page m_root{nullptr};
+    #ifndef XLLAMA_STORE_SKU
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceStatus{nullptr};
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceWebAddress{nullptr};
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceApiAddress{nullptr};
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceModel{nullptr};
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceModelInfo{nullptr};
+    winrt::Windows::UI::Xaml::Controls::TextBlock m_serviceActivity{nullptr};
+    winrt::Windows::UI::Xaml::Controls::Button m_serviceButton{nullptr};
+    winrt::Windows::UI::Xaml::DispatcherTimer m_serviceTimer{nullptr};
+    bool m_api_settings_pending{false};
+    #endif
     winrt::Windows::UI::Xaml::Controls::TextBlock m_modelText{nullptr};
     winrt::Windows::UI::Xaml::Controls::TextBlock m_statusText{nullptr};
     winrt::Windows::UI::Xaml::Controls::ProgressBar m_loadingBar{nullptr};
     winrt::Windows::UI::Xaml::Controls::ScrollViewer m_outputScroll{nullptr};
     winrt::Windows::UI::Xaml::Controls::TextBox m_promptInput{nullptr};
+    bool m_prompt_composing{false};
     winrt::Windows::UI::Xaml::Controls::RichTextBlock m_outputBody{nullptr};
     winrt::Windows::UI::Xaml::Documents::Paragraph m_currentParagraph{nullptr};
     winrt::Windows::UI::Xaml::Controls::TextBlock m_metricsText{nullptr};

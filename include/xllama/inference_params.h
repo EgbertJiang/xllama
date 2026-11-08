@@ -59,6 +59,9 @@ struct InferenceParams {
     int n_batch = 0;
     int n_ubatch = 0;
 
+    /// Opt-in own D3D12 GGUF layers; 0 keeps CPU path.
+    int n_gpu_layers = 0;
+
     /// Quantize KV cache to q8_0 (GGUF path only).
     bool kv_q8 = false;
 

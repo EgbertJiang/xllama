@@ -279,16 +279,9 @@ verify_deleted() {
 
 # Restart app via Device Portal
 restart_app() {
-	curl "${CURL_AUTH[@]}" -H "X-CSRF-Token:${CSRF_TOKEN}" -X DELETE \
-		"${BASE_URL}/api/taskmanager/app?package=${PFN}" >/dev/null 2>&1 || true
+	"${DEPLOY}" stop-app "$PFN"
 	sleep 2
-	local pfamily
-	# shellcheck disable=SC2001
-	pfamily=$(echo "$PFN" | sed 's/_[0-9][0-9.]*_[^_]*__/_/')
-	local aumid
-	aumid=$(printf '%s!xllama' "$pfamily" | base64 -w0)
-	curl "${CURL_AUTH[@]}" -H "X-CSRF-Token:${CSRF_TOKEN}" -X POST -d "" \
-		"${BASE_URL}/api/taskmanager/app?appid=${aumid}" >/dev/null 2>&1 || true
+	"${DEPLOY}" start-app "$PFN"
 }
 
 # Wait for bench-result.csv.done (polling)

@@ -1,0 +1,3 @@
+device,model,quantization,context,threads,generated_tokens,cpu_tok_s,gpu_hybrid_tok_s,gpu_layers,note
+Xbox One S,LFM2.5-1.2B-Instruct,Q4_K_M,512,6,64,11.88,17.83,99,Same build; one run per placement
+Xbox One S,LFM2.5-350M,Q4_K_M,512,6,64,29.43,34.61,1,Same build; one run per placement

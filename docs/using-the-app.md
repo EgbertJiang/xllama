@@ -188,3 +188,20 @@ alternative ([../diffusion/README.md](../diffusion/README.md)). Each
 generation writes
 `diffuse-out.png`, `diffuse-result.csv` (per-stage timings) and a live
 `diffuse-progress.txt`; no cleanup is needed between runs.
+
+## Browser chat on the LAN
+
+With **Settings → LAN API** enabled and xllama foregrounded, open `http://<xbox-ip>:11434/chat` from the Mac browser (use the configured port if different). Select an installed model and send text. See [LAN browser chat](api-endpoint.md#browser-chat) for persistence, editing, retry and service-lifetime limits.
+
+## Native inference-service home
+
+The Xbox home page puts **LAN service** on the left and **console chat** on the right. Start/Stop Service uses the existing persistent LAN API setting. The sidebar shows listener status, detected browser/API addresses, the actual resident model and session context, and its catalogue GPU/CPU configuration. While the shared model is busy, the view reports generating/loading without blocking the UI. Stopping the listener does not cancel an already-running request.
+
+Enter text below the answer area and select **发送** (Send). **停止生成** (Stop Generation) cancels a console-chat turn through the existing cancellation path. Model/settings, chat history and image tools remain in the sidebar. These controls are temporarily disabled while another request uses the shared model. The sidebar scrolls on displays where the tools do not all fit. Keep the Xbox app foregrounded for remote requests.
+
+Mouse/keyboard operation uses the same native controls: click the message box,
+press Enter to send, or Shift+Enter for a newline. Enter during input-method
+composition is not treated as submission. The current composer is saved locally
+in `console-draft.txt` and restored on launch without running inference.
+The service and model-settings buttons remain beside each other at the top of
+the sidebar; use the wheel to reach lower tools or scroll long answers.

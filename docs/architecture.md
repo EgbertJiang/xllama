@@ -140,12 +140,13 @@ Prompt formatting is data-driven, not hard-coded. `chat_format_for(model_id)`
 Detection uses the **basename only** (never path segments — a cache dir named
 `xllama` must not select Llama-3). Families:
 
-| Kind        | Markers                             | System style                 | Typical catalogue                  |
-| ----------- | ----------------------------------- | ---------------------------- | ---------------------------------- |
-| **ChatML**  | `<\|im_start\|>` … `<\|im_end\|>`   | Dedicated system turn        | SmolLM2, LFM, Qwen2.5-Coder, Qwen3 |
-| **Gemma**   | `<start_of_turn>` … `<end_of_turn>` | Merge system into first user | `gemma3-270m`, `gemma4-e2b`        |
-| **Llama-3** | header / `eot` tokens               | Dedicated system turn        | `llama32-3b`                       |
-| **Phi-3**   | `<\|user\|>` … `<\|end\|>`          | Dedicated system turn        | Phi GGUFs (campaign / override)    |
+| Kind         | Markers                             | System style                 | Typical catalogue                  |
+| ------------ | ----------------------------------- | ---------------------------- | ---------------------------------- |
+| **ChatML**   | `<\|im_start\|>` … `<\|im_end\|>`   | Dedicated system turn        | SmolLM2, LFM, Qwen2.5-Coder, Qwen3 |
+| **Gemma ≤3** | `<start_of_turn>` … `<end_of_turn>` | Merge system into first user | `gemma3-270m`                      |
+| **Gemma 4**  | `<\|turn>` … `<turn\|>`             | Dedicated system turn        | `gemma4-e2b`, custom E4B GGUF      |
+| **Llama-3**  | header / `eot` tokens               | Dedicated system turn        | `llama32-3b`                       |
+| **Phi-3**    | `<\|user\|>` … `<\|end\|>`          | Dedicated system turn        | Phi GGUFs (campaign / override)    |
 
 **Qwen3 vs Qwen2.5 (no-think prefill).** Qwen3.x with `enable_thinking=false`
 expects an empty `<think>\n\n</think>` block after the assistant header.
@@ -236,7 +237,7 @@ the second turn the CPU wins at every reachable length — see `uwp-constraints.
 §5d`. The threshold (`token_threshold`) is calibrated on a misattributed
 variable (§5c); the re-derivation concluded a single prompt-length threshold is
 the wrong shape for the decision, so 1550 is left as-is with its rationale
-corrected. Routing is **ORT-only**; GGUF models are CPU-only, so routing is skipped
+corrected. Routing is **ORT-only**; GGUF models use a separate CPU/native D3D12 path, so ORT routing is skipped
 for them. Tunable prefill batching for the llama.cpp path is exposed via
 `SessionParams.n_batch` / `n_ubatch` (`xllama-cli --batch/--ubatch`) — see
 `benchmarks.md` for the (flat) sweep.
@@ -787,3 +788,5 @@ Compile scripts: `scripts/compile-gpubw-shader.sh`,
 - v1.0 narrative snapshot → [technical-report.md](technical-report.md)
 - **Training SSOT** → [training-architecture.md](training-architecture.md)
 - Training ops → [training/README.md](../training/README.md)
+
+Experimental One S GGUF D3D12 placement uses catalogue `gpu_layers` for GUI/API sessions and `bench_gpu_layers.txt` for benchmarks. The native backend accelerates supported weight products while unsupported operations retain CPU execution. See [GPU compatibility evidence](gguf-gpu-decode.md).

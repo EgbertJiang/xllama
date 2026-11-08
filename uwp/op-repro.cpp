@@ -208,7 +208,12 @@ void run_oprepro() {
             so.SetExecutionMode(ORT_SEQUENTIAL);
             so.DisableMemPattern();
             so.SetGraphOptimizationLevel(opt);
-            Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(so, 0));
+            if (opt == ORT_DISABLE_ALL)
+                so.AddConfigEntry("ep.dml.disable_graph_fusion", "1");
+            so.EnableProfiling(utf8_to_wstring(resolve_local_path("oprepro-profile")).c_str());
+            so.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+            so.AppendExecutionProvider("DML",
+                                       {{"device_id", "0"}, {"disable_metacommands", "true"}});
             Ort::Session dml(env, utf8_to_wstring(model_path).c_str(), so);
             log_output("[xllama] oprepro: DML session created\n");
             write_f32_file(resolve_local_path("repro-out-dml.bin"), run_once(dml, payload));

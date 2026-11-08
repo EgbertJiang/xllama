@@ -28,6 +28,8 @@
     #include "xllama/utf8_utils.h"
 
     #include <winrt/Windows.Data.Json.h>
+    #include <winrt/Windows.Networking.Connectivity.h>
+    #include <winrt/Windows.Networking.h>
     #include <winrt/Windows.UI.Xaml.Media.Imaging.h>
 
     #include <algorithm>
@@ -35,6 +37,8 @@
     #include <cstdio>
     #include <ctime>
     #include <filesystem>
+    #include <fstream>
+    #include <iterator>
     #include <limits>
     #include <string>
     #include <thread>
@@ -135,170 +139,195 @@ no_keyboard_on_programmatic_focus(winrt::Windows::UI::Xaml::Controls::TextBox co
 
 void MainPageController::BuildUI() {
     m_root = Page();
+    m_root.RequestedTheme(ElementTheme::Dark);
+    m_root.Background(Media::SolidColorBrush({255, 18, 22, 29}));
 
-    // ---- outer grid (3 rows: header / body / footer) ----
     Grid outerGrid;
-    outerGrid.Margin(ThicknessHelper::FromLengths(48, 27, 48, 27)); // Xbox TV safe area (5%)
+    outerGrid.Margin(ThicknessHelper::FromLengths(48, 27, 48, 27));
+    for (const auto length :
+         {GridLengthHelper::Auto(), GridLengthHelper::FromValueAndType(1, GridUnitType::Star),
+          GridLengthHelper::Auto()}) {
+        RowDefinition row;
+        row.Height(length);
+        outerGrid.RowDefinitions().Append(row);
+    }
+    ColumnDefinition sidebarColumn;
+    sidebarColumn.Width(GridLengthHelper::FromPixels(300));
+    ColumnDefinition chatColumn;
+    chatColumn.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    outerGrid.ColumnDefinitions().Append(sidebarColumn);
+    outerGrid.ColumnDefinitions().Append(chatColumn);
 
-    RowDefinition rowAuto1;
-    rowAuto1.Height(GridLengthHelper::Auto());
-    RowDefinition rowStar;
-    rowStar.Height(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    RowDefinition rowAuto2;
-    rowAuto2.Height(GridLengthHelper::Auto());
-    outerGrid.RowDefinitions().Append(rowAuto1);
-    outerGrid.RowDefinitions().Append(rowStar);
-    outerGrid.RowDefinitions().Append(rowAuto2);
+    auto text = [](const wchar_t* value, double size, bool muted = false) {
+        TextBlock block;
+        block.Text(value);
+        block.FontSize(size);
+        block.TextWrapping(TextWrapping::Wrap);
+        if (muted)
+            block.Opacity(0.65);
+        return block;
+    };
+    auto sidebar_button = [](const wchar_t* title) {
+        Button button;
+        button.Content(winrt::box_value(winrt::hstring(title)));
+        button.HorizontalAlignment(HorizontalAlignment::Stretch);
+        button.HorizontalContentAlignment(HorizontalAlignment::Left);
+        button.FontSize(16);
+        button.MinHeight(40);
+        return button;
+    };
 
-    // ---- Row 0: header (model name + status + progress bar) ----
     StackPanel header;
     Grid::SetRow(header, 0);
-
-    m_modelText = TextBlock();
-    m_modelText.FontSize(28);
-    m_modelText.FontWeight(FontWeights::SemiBold());
-    m_modelText.Text(L"xllama");
-
-    m_statusText = TextBlock();
-    m_statusText.FontSize(14);
-    m_statusText.Opacity(0.7);
+    Grid::SetColumnSpan(header, 2);
+    auto title = text(L"Xbox 推理服务", 28);
+    title.FontWeight(FontWeights::SemiBold());
+    header.Children().Append(title);
+    m_modelText = text(L"xllama", 16, true);
+    m_modelText.Margin(ThicknessHelper::FromLengths(0, 6, 0, 0));
+    header.Children().Append(m_modelText);
+    m_statusText = text(L"Loading model...", 14, true);
     m_statusText.Margin(ThicknessHelper::FromLengths(0, 4, 0, 0));
-    m_statusText.Text(L"Loading model...");
-
+    header.Children().Append(m_statusText);
     m_loadingBar = ProgressBar();
     m_loadingBar.IsIndeterminate(true);
     m_loadingBar.Visibility(Visibility::Collapsed);
     m_loadingBar.Margin(ThicknessHelper::FromLengths(0, 8, 0, 0));
-
-    header.Children().Append(m_modelText);
-    header.Children().Append(m_statusText);
     header.Children().Append(m_loadingBar);
+    outerGrid.Children().Append(header);
 
-    // ---- Row 1: scroll area (prompt input + output text) ----
+    ScrollViewer sidebarScroll;
+    Grid::SetRow(sidebarScroll, 1);
+    Grid::SetRowSpan(sidebarScroll, 2);
+    sidebarScroll.Margin(ThicknessHelper::FromLengths(0, 22, 24, 0));
+    sidebarScroll.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
+    StackPanel sidebar;
+    sidebar.Spacing(6);
+    auto serviceHeading = text(L"局域网服务", 20);
+    serviceHeading.FontWeight(FontWeights::SemiBold());
+    sidebar.Children().Append(serviceHeading);
+    m_settingsButton = sidebar_button(L"模型设置");
+    #ifndef XLLAMA_STORE_SKU
+    m_serviceStatus = text(L"正在读取服务状态", 16);
+    sidebar.Children().Append(m_serviceStatus);
+    m_serviceButton = sidebar_button(L"读取状态中…");
+    m_serviceButton.IsEnabled(false);
+    Grid serviceActions;
+    for (int i = 0; i < 2; ++i) {
+        ColumnDefinition column;
+        column.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+        serviceActions.ColumnDefinitions().Append(column);
+    }
+    Grid::SetColumn(m_settingsButton, 1);
+    m_serviceButton.Margin(ThicknessHelper::FromLengths(0, 0, 5, 0));
+    m_settingsButton.Margin(ThicknessHelper::FromLengths(5, 0, 0, 0));
+    serviceActions.Children().Append(m_serviceButton);
+    serviceActions.Children().Append(m_settingsButton);
+    sidebar.Children().Append(serviceActions);
+    sidebar.Children().Append(text(L"Mac 浏览器地址", 13, true));
+    m_serviceWebAddress = text(L"正在检测局域网地址", 15);
+    m_serviceWebAddress.IsTextSelectionEnabled(true);
+    sidebar.Children().Append(m_serviceWebAddress);
+    sidebar.Children().Append(text(L"OpenAI API 地址", 13, true));
+    m_serviceApiAddress = text(L"—", 15);
+    m_serviceApiAddress.IsTextSelectionEnabled(true);
+    sidebar.Children().Append(m_serviceApiAddress);
+    sidebar.Children().Append(text(L"驻留模型", 13, true));
+    m_serviceModel = text(L"尚未载入", 16);
+    sidebar.Children().Append(m_serviceModel);
+    m_serviceModelInfo = text(L"", 14, true);
+    sidebar.Children().Append(m_serviceModelInfo);
+    m_serviceActivity = text(L"等待模型", 14);
+    sidebar.Children().Append(m_serviceActivity);
+    sidebar.Children().Append(
+        text(L"服务与主机对话共用一个模型。使用时保持应用在前台。", 13, true));
+    #else
+    sidebar.Children().Append(text(L"此版本不提供局域网服务。", 14, true));
+    sidebar.Children().Append(m_settingsButton);
+    #endif
+    m_historyButton = sidebar_button(L"聊天记录");
+    m_imageButton = sidebar_button(L"图像工具");
+    sidebar.Children().Append(m_historyButton);
+    sidebar.Children().Append(m_imageButton);
+    sidebarScroll.Content(sidebar);
+    outerGrid.Children().Append(sidebarScroll);
+
+    Grid chat;
+    Grid::SetRow(chat, 1);
+    Grid::SetColumn(chat, 1);
+    chat.Margin(ThicknessHelper::FromLengths(0, 22, 0, 0));
+    RowDefinition chatHeader;
+    chatHeader.Height(GridLengthHelper::Auto());
+    RowDefinition chatBody;
+    chatBody.Height(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
+    chat.RowDefinitions().Append(chatHeader);
+    chat.RowDefinitions().Append(chatBody);
+    auto chatHeading = text(L"主机对话", 20);
+    chatHeading.FontWeight(FontWeights::SemiBold());
+    chat.Children().Append(chatHeading);
     m_outputScroll = ScrollViewer();
     Grid::SetRow(m_outputScroll, 1);
     m_outputScroll.VerticalScrollBarVisibility(ScrollBarVisibility::Auto);
-    m_outputScroll.Margin(ThicknessHelper::FromLengths(0, 24, 0, 0));
-    // IsFocusEngagementEnabled intentionally NOT set on ScrollViewer — only set on the
-    // inner TextBox to avoid requiring two A-presses to engage text input on Xbox.
+    m_outputScroll.Margin(ThicknessHelper::FromLengths(0, 14, 0, 0));
+    m_outputBody = RichTextBlock();
+    m_outputBody.TextWrapping(TextWrapping::Wrap);
+    m_outputBody.FontSize(18);
+    m_outputBody.IsTextSelectionEnabled(true);
+    m_currentParagraph = winrt::Windows::UI::Xaml::Documents::Paragraph();
+    m_outputBody.Blocks().Append(m_currentParagraph);
+    m_outputScroll.Content(m_outputBody);
+    chat.Children().Append(m_outputScroll);
+    outerGrid.Children().Append(chat);
 
-    StackPanel bodyStack;
-
+    StackPanel composer;
+    Grid::SetRow(composer, 2);
+    Grid::SetColumn(composer, 1);
+    composer.Margin(ThicknessHelper::FromLengths(0, 18, 0, 0));
+    composer.Spacing(10);
     m_promptInput = TextBox();
-    m_promptInput.PlaceholderText(L"Type your prompt here (gamepad A → opens keyboard)...");
+    m_promptInput.PlaceholderText(L"输入消息 · Enter 发送，Shift+Enter 换行");
+    m_promptInput.MaxLength(12000);
     m_promptInput.AcceptsReturn(true);
     m_promptInput.TextWrapping(TextWrapping::Wrap);
-    m_promptInput.MinHeight(120);
+    m_promptInput.MinHeight(90);
+    m_promptInput.MaxHeight(160);
     m_promptInput.IsSpellCheckEnabled(false);
     m_promptInput.FontSize(18);
-    // Focus returns here after every generation (SetRunning), which is right for
-    // the pad — the next prompt is one A press away. What was not intended is
-    // the side effect: on Xbox an editable TextBox receiving focus opens the
-    // on-screen keyboard, so the keyboard reappeared over the answer the user
-    // had just waited for, and stayed for the rest of the session.
-    //
-    // Found by looking at demo footage rather than by using the app: the
-    // keyboard covers the UI from the first completed answer onward, in half of
-    // the captured video and over the image viewer in a Store screenshot.
-    // Pressing A still opens it, because that is user interaction, not
-    // programmatic focus.
     no_keyboard_on_programmatic_focus(m_promptInput);
     m_promptInput.IsFocusEngagementEnabled(true);
     {
         using namespace winrt::Windows::UI::Xaml::Input;
-        InputScopeName sname;
-        sname.NameValue(InputScopeNameValue::Chat);
+        InputScopeName name;
+        name.NameValue(InputScopeNameValue::Chat);
         InputScope scope;
-        scope.Names().Append(sname);
+        scope.Names().Append(name);
         m_promptInput.InputScope(scope);
     }
-
-    // RichTextBlock: O(1) per-token append via Paragraph.Inlines (vs O(n²) TextBlock.Text)
-    m_outputBody = RichTextBlock();
-    m_outputBody.TextWrapping(TextWrapping::Wrap);
-    m_outputBody.FontFamily(winrt::Windows::UI::Xaml::Media::FontFamily(L"Consolas"));
-    m_outputBody.FontSize(20);
-    m_outputBody.Margin(ThicknessHelper::FromLengths(0, 16, 0, 0));
-    m_outputBody.IsTextSelectionEnabled(true);
-    m_currentParagraph = winrt::Windows::UI::Xaml::Documents::Paragraph();
-    m_outputBody.Blocks().Append(m_currentParagraph);
-
-    bodyStack.Children().Append(m_promptInput);
-    bodyStack.Children().Append(m_outputBody);
-    m_outputScroll.Content(bodyStack);
-
-    // ---- Row 2: footer (metrics + buttons) ----
-    Grid footer;
-    Grid::SetRow(footer, 2);
-    footer.Margin(ThicknessHelper::FromLengths(0, 16, 0, 0));
-
-    ColumnDefinition colStar;
-    colStar.Width(GridLengthHelper::FromValueAndType(1, GridUnitType::Star));
-    ColumnDefinition colAuto;
-    colAuto.Width(GridLengthHelper::Auto());
-    footer.ColumnDefinitions().Append(colStar);
-    footer.ColumnDefinitions().Append(colAuto);
-
-    m_metricsText = TextBlock();
-    m_metricsText.FontSize(12);
-    m_metricsText.Opacity(0.7);
-    m_metricsText.VerticalAlignment(VerticalAlignment::Center);
-    Grid::SetColumn(m_metricsText, 0);
-
-    StackPanel btnPanel;
-    btnPanel.Orientation(Orientation::Horizontal);
-    Grid::SetColumn(btnPanel, 1);
-
-    m_settingsButton = Button();
-    m_settingsButton.Content(winrt::box_value(L"[S]  Settings"));
-    m_settingsButton.MinWidth(100);
-    m_settingsButton.Margin(ThicknessHelper::FromLengths(0, 0, 12, 0));
-
+    composer.Children().Append(m_promptInput);
+    m_metricsText = text(L"", 12, true);
+    composer.Children().Append(m_metricsText);
+    StackPanel actions;
+    actions.Orientation(Orientation::Horizontal);
+    actions.Spacing(12);
     m_newChatButton = Button();
-    m_newChatButton.Content(winrt::box_value(L"+  New"));
-    m_newChatButton.MinWidth(100);
-    m_newChatButton.Margin(ThicknessHelper::FromLengths(0, 0, 12, 0));
-
-    m_historyButton = Button();
-    m_historyButton.Content(winrt::box_value(L"[=]  History"));
-    m_historyButton.MinWidth(100);
-    m_historyButton.Margin(ThicknessHelper::FromLengths(0, 0, 12, 0));
-
-    m_imageButton = Button();
-    m_imageButton.Content(winrt::box_value(L"[*]  Image"));
-    m_imageButton.MinWidth(100);
-    m_imageButton.Margin(ThicknessHelper::FromLengths(0, 0, 12, 0));
-
+    m_newChatButton.Content(winrt::box_value(L"新对话"));
+    m_newChatButton.MinWidth(104);
     m_runButton = Button();
-    m_runButton.Content(winrt::box_value(L"▶  Run"));
-    m_runButton.MinWidth(120);
-    m_runButton.Margin(ThicknessHelper::FromLengths(0, 0, 12, 0));
-    m_runButton.IsEnabled(false); // disabled until EnsureModelAsync confirms model is ready
-
+    m_runButton.Content(winrt::box_value(L"发送"));
+    m_runButton.MinWidth(104);
+    m_runButton.Background(Media::SolidColorBrush({255, 37, 99, 235}));
+    m_runButton.Foreground(Media::SolidColorBrush({255, 255, 255, 255}));
+    m_runButton.IsEnabled(false);
     m_cancelButton = Button();
-    m_cancelButton.Content(winrt::box_value(L"■  Cancel"));
+    m_cancelButton.Content(winrt::box_value(L"停止生成"));
+    m_cancelButton.MinWidth(104);
     m_cancelButton.IsEnabled(false);
-    m_cancelButton.MinWidth(120);
-
-    btnPanel.Children().Append(m_settingsButton);
-    btnPanel.Children().Append(m_newChatButton);
-    btnPanel.Children().Append(m_historyButton);
-    btnPanel.Children().Append(m_imageButton);
-    btnPanel.Children().Append(m_runButton);
-    btnPanel.Children().Append(m_cancelButton);
-
-    footer.Children().Append(m_metricsText);
-    footer.Children().Append(btnPanel);
-
-    // ---- wire grid ----
-    outerGrid.Children().Append(header);
-    outerGrid.Children().Append(m_outputScroll);
-    outerGrid.Children().Append(footer);
-
+    actions.Children().Append(m_newChatButton);
+    actions.Children().Append(m_runButton);
+    actions.Children().Append(m_cancelButton);
+    composer.Children().Append(actions);
+    outerGrid.Children().Append(composer);
     m_root.Content(outerGrid);
-
-    // Dark theme fallback on desktop (Xbox inherits from Application)
-    m_root.RequestedTheme(ElementTheme::Dark);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,17 +344,48 @@ MainPageController::MainPageController() {
 
 void MainPageController::Init() {
     auto self = weak_from_this();
-    m_runButton.Click([self](IInspectable const&, RoutedEventArgs const&) {
-        if (auto s = self.lock()) {
-            auto prompt = s->m_promptInput.Text();
-            if (prompt.empty()) {
-                s->SetStatus(L"Enter a prompt first");
-                return;
-            }
-            s->m_promptInput.Text(L""); // clear immediately so the user sees the send action
-            s->StartInference(std::wstring(prompt.c_str()));
-        }
+    m_runButton.Click([self](IInspectable const& sender, RoutedEventArgs const& e) {
+        if (auto s = self.lock())
+            s->OnRunClick(sender, e);
     });
+    // Restore the active composer only; never submit a restored draft.
+    try {
+        std::ifstream input(std::filesystem::path(local_wpath(L"console-draft.txt")),
+                            std::ios::binary);
+        if (input) {
+            const std::string draft((std::istreambuf_iterator<char>(input)), {});
+            if (draft.size() <= 64 * 1024)
+                m_promptInput.Text(::xllama::utf8_to_wstring(draft));
+        }
+    } catch (...) {
+        SetStatus(L"输入草稿无法恢复，原文件未改动", StatusKind::Error);
+    }
+    m_promptInput.TextChanged([self](IInspectable const&, TextChangedEventArgs const&) {
+        if (auto s = self.lock())
+            s->SavePromptDraft();
+    });
+    m_promptInput.TextCompositionStarted(
+        [self](IInspectable const&, TextCompositionStartedEventArgs const&) {
+            if (auto s = self.lock())
+                s->m_prompt_composing = true;
+        });
+    m_promptInput.TextCompositionEnded(
+        [self](IInspectable const&, TextCompositionEndedEventArgs const&) {
+            if (auto s = self.lock())
+                s->m_prompt_composing = false;
+        });
+    m_promptInput.PreviewKeyDown(
+        [self](IInspectable const&, winrt::Windows::UI::Xaml::Input::KeyRoutedEventArgs const& e) {
+            auto s = self.lock();
+            using VK = winrt::Windows::System::VirtualKey;
+            if (!s || e.Key() != VK::Enter || s->m_prompt_composing)
+                return;
+            const auto shift = CoreWindow::GetForCurrentThread().GetKeyState(VK::Shift);
+            if ((shift & CoreVirtualKeyStates::Down) != CoreVirtualKeyStates::None)
+                return;
+            e.Handled(true);
+            s->OnRunClick(nullptr, RoutedEventArgs{});
+        });
     m_cancelButton.Click([self](IInspectable const&, RoutedEventArgs const&) {
         if (auto s = self.lock())
             s->OnCancelClick(nullptr, RoutedEventArgs{});
@@ -417,6 +477,42 @@ void MainPageController::Init() {
         m_history.LoadIndex();
     }
     LoadSettings();
+
+    #ifndef XLLAMA_STORE_SKU
+    m_serviceButton.Click([self](IInspectable const&, RoutedEventArgs const&) {
+        if (auto s = self.lock()) {
+            const auto status = ::xllama::api::server_status();
+            int port = status.port;
+            if (!::xllama::api::port_bindable(port)) {
+                try {
+                    port = std::stoi(read_local_text_file(L"api-port.txt"));
+                } catch (...) {
+                    port = 11434;
+                }
+            }
+            if (!::xllama::api::port_bindable(port))
+                port = 11434;
+            s->ApplyApiSettings(status.state != ::xllama::api::ServerState::Running, port);
+        }
+    });
+    m_serviceTimer = DispatcherTimer();
+    m_serviceTimer.Interval(std::chrono::seconds(2));
+    m_serviceTimer.Tick([self](IInspectable const&, IInspectable const&) {
+        if (auto s = self.lock())
+            s->RefreshServicePanel();
+    });
+    m_root.Loaded([self](IInspectable const&, RoutedEventArgs const&) {
+        if (auto s = self.lock()) {
+            s->RefreshServicePanel();
+            s->m_serviceTimer.Start();
+        }
+    });
+    m_root.Unloaded([self](IInspectable const&, RoutedEventArgs const&) {
+        if (auto s = self.lock())
+            s->m_serviceTimer.Stop();
+    });
+    RefreshServicePanel();
+    #endif
 
     EnsureModelAsync();
     ShowDisclaimerIfNeeded();
@@ -1363,6 +1459,113 @@ void MainPageController::SaveSettings() {
 }
 
     #ifndef XLLAMA_STORE_SKU
+void MainPageController::RefreshServicePanel() {
+    const auto status = ::xllama::api::server_status();
+    const bool listening = status.state == ::xllama::api::ServerState::Running;
+    const bool starting = status.state == ::xllama::api::ServerState::Starting;
+    std::wstring service;
+    switch (status.state) {
+    case ::xllama::api::ServerState::Running:
+        service = L"运行中 · 端口 " + std::to_wstring(status.port);
+        break;
+    case ::xllama::api::ServerState::Starting:
+        service = L"正在启动服务";
+        break;
+    case ::xllama::api::ServerState::Error:
+        service = L"服务错误：" + ::xllama::utf8_to_wstring(status.message);
+        break;
+    default:
+        service = L"服务已停止";
+        break;
+    }
+    m_serviceStatus.Text(service);
+    m_serviceStatus.Foreground(
+        Media::SolidColorBrush(listening ? winrt::Windows::UI::Color{255, 108, 211, 150}
+                                         : winrt::Windows::UI::Color{255, 190, 199, 214}));
+    m_serviceButton.Content(winrt::box_value(m_api_settings_pending ? L"正在应用…"
+                                             : listening            ? L"停止服务"
+                                                                    : L"启动服务"));
+    m_serviceButton.IsEnabled(!m_api_settings_pending && !starting);
+
+    std::vector<std::wstring> addresses;
+    try {
+        using namespace winrt::Windows::Networking;
+        for (const auto& host : Connectivity::NetworkInformation::GetHostNames()) {
+            if (host.Type() != HostNameType::Ipv4 || !host.IPInformation())
+                continue;
+            std::wstring address(host.CanonicalName());
+            if (address.rfind(L"127.", 0) == 0 || address.rfind(L"169.254.", 0) == 0)
+                continue;
+            if (std::find(addresses.begin(), addresses.end(), address) == addresses.end())
+                addresses.push_back(std::move(address));
+        }
+    } catch (...) {
+        // A network failure must not take down an otherwise usable local chat UI.
+    }
+    if (!listening) {
+        m_serviceWebAddress.Text(L"启动服务后显示");
+        m_serviceApiAddress.Text(L"启动服务后显示");
+    } else if (addresses.empty()) {
+        m_serviceWebAddress.Text(L"未检测到局域网 IPv4 地址");
+        m_serviceApiAddress.Text(L"请检查网络连接");
+    } else {
+        std::wstring web, api;
+        for (const auto& address : addresses) {
+            const auto base = L"http://" + address + L":" + std::to_wstring(status.port);
+            if (!web.empty()) {
+                web += L"\n";
+                api += L"\n";
+            }
+            web += base + L"/chat";
+            api += base + L"/v1";
+        }
+        m_serviceWebAddress.Text(web);
+        m_serviceApiAddress.Text(api);
+    }
+
+    auto& hub = ::xllama::session_hub();
+    std::unique_lock<std::mutex> lock(hub.mtx, std::try_to_lock);
+    const bool busy = !lock.owns_lock();
+    std::string resident;
+    int context = 0;
+    bool loaded = false;
+    if (!busy) {
+        loaded = hub.session != nullptr;
+        if (loaded) {
+            resident = hub.model;
+            context = hub.session->context_length();
+        }
+        lock.unlock();
+    }
+    if (busy) {
+        m_serviceActivity.Text(hub.preloading.load() ? L"正在载入模型" : L"正在推理或载入模型");
+    } else if (loaded) {
+        m_serviceModel.Text(::xllama::utf8_to_wstring(resident));
+        std::wstring details = L"上下文：" + std::to_wstring(context) + L" token";
+        const auto& manifest = CachedManifest();
+        if (const auto* entry =
+                ::xllama::FindManifestEntry(manifest, ::xllama::utf8_to_wstring(resident))) {
+            if (entry->kind == L"gguf")
+                details += entry->gpu_layers > 0 ? L"\n配置：GPU 混合推理" : L"\n配置：CPU 推理";
+            else
+                details += L"\n配置：ORT / EP 路由";
+        }
+        m_serviceModelInfo.Text(details);
+        m_serviceActivity.Text(L"模型就绪 · 空闲");
+    } else {
+        m_serviceModel.Text(L"尚未载入");
+        m_serviceModelInfo.Text(L"主机选择：" + m_model_filename);
+        m_serviceActivity.Text(L"等待模型载入");
+    }
+    // Never block the XAML thread behind a browser request or a model load.
+    const bool available = !busy && !m_is_running.load();
+    m_runButton.IsEnabled(available && m_model_ready.load());
+    m_settingsButton.IsEnabled(available);
+    m_historyButton.IsEnabled(available);
+    m_newChatButton.IsEnabled(available);
+    m_imageButton.IsEnabled(available);
+}
+
 void MainPageController::ApplyApiSettings(bool enabled, int port) {
     if (enabled) {
         write_local_bytes(L"api-port.txt", std::to_string(port));
@@ -1371,6 +1574,8 @@ void MainPageController::ApplyApiSettings(bool enabled, int port) {
         _wremove(local_wpath(L"api.flag").c_str());
     }
 
+    m_api_settings_pending = true;
+    RefreshServicePanel();
     SetStatus(enabled ? L"Starting LAN API..." : L"Stopping LAN API...", StatusKind::Working);
     auto self = shared_from_this();
     auto dispatcher = m_root.Dispatcher();
@@ -1388,6 +1593,8 @@ void MainPageController::ApplyApiSettings(bool enabled, int port) {
         dispatcher.RunAsync(CoreDispatcherPriority::Normal, [self, status, generation]() {
             if (generation != self->m_api_settings_generation.load())
                 return;
+            self->m_api_settings_pending = false;
+            self->RefreshServicePanel();
             if (status.state == ::xllama::api::ServerState::Running) {
                 self->SetStatus(L"LAN API listening on port " + std::to_wstring(status.port),
                                 StatusKind::Success);
@@ -2320,6 +2527,7 @@ fire_and_forget MainPageController::EnsureModelAsync() {
     std::wstring model_name =
         self->m_model_filename.empty() ? DefaultChatModelId() : self->m_model_filename;
     self->EnsureModelNamedAsync(model_name, true);
+    co_return;
 }
 
 fire_and_forget MainPageController::EnsureModelNamedAsync(std::wstring model_name,
@@ -2479,8 +2687,7 @@ fire_and_forget MainPageController::EnsureModelNamedAsync(std::wstring model_nam
                     throw std::runtime_error("Cannot prepare USB model write: " +
                                              begin_ec.message());
 
-                // Destination: LocalState\models\<name>
-                // CreateFolderAsync with OpenIfExists creates or opens — no try/catch needed.
+                // Downloads and USB imports retain the application-owned destination.
                 auto local_folder2 =
                     winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
                 auto models_folder = co_await local_folder2.CreateFolderAsync(
@@ -2691,6 +2898,7 @@ bool MainPageController::EnsureSession(const std::string& model, std::string* er
             sp.n_ctx = ::xllama::resolve_n_ctx(entry->n_ctx);
             if (entry->kind == L"gguf") {
                 sp.backend = xllama::Backend::LlamaCpp;
+                sp.n_gpu_layers = entry->gpu_layers;
                 if (!entry->lora.empty()) {
                     // Resolve against LocalState\models\<name>\lora-file (or InstalledPath
                     // after provision). resolve_model_path on a bare name yields the dir.
@@ -3171,13 +3379,37 @@ void MainPageController::StartInference(std::wstring const& prompt_w) {
 // Event handlers (wired via weak_ptr lambda in ctor; kept for direct call)
 // ---------------------------------------------------------------------------
 
+void MainPageController::SavePromptDraft() {
+    const auto path = local_wpath(L"console-draft.txt");
+    const auto temporary = local_wpath(L"console-draft.tmp");
+    const auto bytes = ::xllama::wstring_to_utf8(std::wstring(m_promptInput.Text()));
+    FILE* file = _wfopen(temporary.c_str(), L"wb");
+    bool saved = false;
+    if (file) {
+        const auto written = fwrite(bytes.data(), 1, bytes.size(), file);
+        const bool closed = fclose(file) == 0;
+        if (written == bytes.size() && closed) {
+            std::error_code error;
+            std::filesystem::rename(temporary, path, error);
+            saved = !error;
+        }
+    }
+    if (!saved)
+        SetStatus(L"草稿保存失败，请保留当前输入后再退出", StatusKind::Error);
+}
+
 void MainPageController::OnRunClick(IInspectable const&, RoutedEventArgs const&) {
-    auto prompt = m_promptInput.Text();
-    if (prompt.empty()) {
-        SetStatus(L"Enter a prompt first");
+    if (!m_runButton.IsEnabled() || m_is_running.load()) {
+        SetStatus(L"模型正忙，请稍后发送");
         return;
     }
-    StartInference(std::wstring(prompt.c_str()));
+    const std::wstring prompt(m_promptInput.Text());
+    if (prompt.find_first_not_of(L" \t\r\n") == std::wstring::npos) {
+        SetStatus(L"请先输入消息");
+        return;
+    }
+    m_promptInput.Text(L"");
+    StartInference(prompt);
 }
 
 void MainPageController::OnCancelClick(IInspectable const&, RoutedEventArgs const&) {

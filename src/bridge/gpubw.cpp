@@ -25,6 +25,9 @@
 
     #include "gpubw_stream_dxil.h"
     #include "xllama/d3d12_dyn.h"
+    #include "xllama/path_utils.h"
+    #include "xllama/platform.h"
+    #include "xllama/utf8_utils.h"
 
 using Microsoft::WRL::ComPtr;
 #endif
@@ -294,6 +297,28 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
         }
     }
 
+    D3D12_FEATURE_DATA_SHADER_MODEL sm = {D3D_SHADER_MODEL_6_4};
+    HRESULT sm_hr = device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm));
+    D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
+    HRESULT options_hr =
+        device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1));
+    char caps[256];
+    std::snprintf(
+        caps, sizeof(caps),
+        "[xllama] gpubw caps: shader_model=0x%x hr=0x%08lx wave_ops=%d options_hr=0x%08lx\n",
+        sm.HighestShaderModel, static_cast<unsigned long>(sm_hr), options1.WaveOps,
+        static_cast<unsigned long>(options_hr));
+    log_output(caps);
+    D3D12_FEATURE_DATA_ARCHITECTURE1 architecture = {};
+    HRESULT architecture_hr = device->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE1,
+                                                          &architecture, sizeof(architecture));
+    std::snprintf(
+        caps, sizeof(caps),
+        "[xllama] gpubw architecture: hr=0x%08lx UMA=%d coherent=%d tiled=%d isolated_mmu=%d\n",
+        static_cast<unsigned long>(architecture_hr), architecture.UMA,
+        architecture.CacheCoherentUMA, architecture.TileBasedRenderer, architecture.IsolatedMMU);
+    log_output(caps);
+
     D3D12_COMMAND_QUEUE_DESC qd = {};
     qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     ComPtr<ID3D12CommandQueue> queue;
@@ -326,10 +351,39 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
     pso_desc.pRootSignature = root.Get();
     pso_desc.CS.pShaderBytecode = kGpubwStreamDxil;
     pso_desc.CS.BytecodeLength = kGpubwStreamDxilSize;
+    // Developer probe only: compare bytecode formats using the same bindings and dispatch.
+    std::vector<unsigned char> shader_override;
+    #ifndef XLLAMA_STORE_SKU
+    FILE* shader_file =
+        _wfopen(utf8_to_wstring(resolve_local_path("gpubw-shader.bin")).c_str(), L"rb");
+    if (shader_file) {
+        fseek(shader_file, 0, SEEK_END);
+        long size = ftell(shader_file);
+        fseek(shader_file, 0, SEEK_SET);
+        if (size > 0 && size <= 1024 * 1024) {
+            shader_override.resize(static_cast<size_t>(size));
+            if (fread(shader_override.data(), 1, shader_override.size(), shader_file) !=
+                shader_override.size())
+                shader_override.clear();
+        }
+        fclose(shader_file);
+        if (shader_override.empty()) {
+            r.error_msg = "invalid gpubw-shader.bin";
+            return r;
+        }
+        pso_desc.CS.pShaderBytecode = shader_override.data();
+        pso_desc.CS.BytecodeLength = shader_override.size();
+        log_output("[xllama] gpubw: using developer shader override\n");
+    }
+    #endif
     ComPtr<ID3D12PipelineState> pso;
     hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&pso));
     if (FAILED(hr)) {
         throw_if_failed(hr, "CreateComputePipelineState", r);
+        char reason[96];
+        std::snprintf(reason, sizeof(reason), " device_removed_reason=0x%08lx",
+                      static_cast<unsigned long>(device->GetDeviceRemovedReason()));
+        r.error_msg += reason;
         return r;
     }
 
@@ -341,27 +395,30 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
     }
     const UINT groups = plan.n_groups; // total groups (may pad beyond need)
     const UINT64 input_bytes = static_cast<UINT64>(r.buffer_bytes);
+    const UINT64 input_resource_bytes = input_bytes + 256;
     const UINT64 out_bytes = static_cast<UINT64>(groups) * sizeof(std::uint32_t);
+    // Keep an unused guard region after the logical output for driver diagnostics.
+    const UINT64 out_resource_bytes = out_bytes + 256;
 
     ComPtr<ID3D12Resource> input_default =
-        create_buffer(device.Get(), input_bytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_NONE,
-                      D3D12_RESOURCE_STATE_COPY_DEST, r, "input_default");
+        create_buffer(device.Get(), input_resource_bytes, D3D12_HEAP_TYPE_DEFAULT,
+                      D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COPY_DEST, r, "input_default");
     if (!input_default)
         return r;
-    ComPtr<ID3D12Resource> input_upload =
-        create_buffer(device.Get(), input_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE,
-                      D3D12_RESOURCE_STATE_GENERIC_READ, r, "input_upload");
+    ComPtr<ID3D12Resource> input_upload = create_buffer(
+        device.Get(), input_resource_bytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_GENERIC_READ, r, "input_upload");
     if (!input_upload)
         return r;
     ComPtr<ID3D12Resource> output_default =
-        create_buffer(device.Get(), out_bytes, D3D12_HEAP_TYPE_DEFAULT,
+        create_buffer(device.Get(), out_resource_bytes, D3D12_HEAP_TYPE_DEFAULT,
                       D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS, r, "output_default");
     if (!output_default)
         return r;
-    ComPtr<ID3D12Resource> output_readback =
-        create_buffer(device.Get(), out_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
-                      D3D12_RESOURCE_STATE_COPY_DEST, r, "output_readback");
+    ComPtr<ID3D12Resource> output_readback = create_buffer(
+        device.Get(), out_resource_bytes, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
+        D3D12_RESOURCE_STATE_COPY_DEST, r, "output_readback");
     if (!output_readback)
         return r;
     ComPtr<ID3D12Resource> cb_upload =
@@ -429,7 +486,7 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
     srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
     srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srv.Buffer.FirstElement = 0;
-    srv.Buffer.NumElements = static_cast<UINT>(n_words);
+    srv.Buffer.NumElements = static_cast<UINT>(input_resource_bytes / sizeof(std::uint32_t));
     srv.Buffer.StructureByteStride = sizeof(std::uint32_t);
     device->CreateShaderResourceView(input_default.Get(), &srv, cpu_srv);
 
@@ -439,8 +496,19 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
     uav.Format = DXGI_FORMAT_UNKNOWN;
     uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
     uav.Buffer.FirstElement = 0;
-    uav.Buffer.NumElements = groups;
+    uav.Buffer.NumElements = static_cast<UINT>(out_resource_bytes / sizeof(std::uint32_t));
     uav.Buffer.StructureByteStride = sizeof(std::uint32_t);
+    #ifndef XLLAMA_STORE_SKU
+    FILE* raw_flag =
+        _wfopen(utf8_to_wstring(resolve_local_path("gpubw-uav-raw.flag")).c_str(), L"rb");
+    if (raw_flag) {
+        fclose(raw_flag);
+        uav.Format = DXGI_FORMAT_R32_TYPELESS;
+        uav.Buffer.StructureByteStride = 0;
+        uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        log_output("[xllama] gpubw: raw UAV diagnostic enabled\n");
+    }
+    #endif
     device->CreateUnorderedAccessView(output_default.Get(), nullptr, &uav, cpu_uav);
 
     ComPtr<ID3D12Fence> fence;
@@ -543,6 +611,16 @@ GpubwResult measure_gpubw(std::size_t buffer_bytes, int iterations) {
                 return r;
             }
             const auto* partials = static_cast<const std::uint32_t*>(mapped);
+            if (it == 0 && groups >= 4) {
+                char sample[240];
+                std::snprintf(sample, sizeof(sample),
+                              "[xllama] gpubw readback: first=%08x %08x %08x %08x last=%08x %08x "
+                              "%08x %08x groups=%u\n",
+                              partials[0], partials[1], partials[2], partials[3],
+                              partials[groups - 4], partials[groups - 3], partials[groups - 2],
+                              partials[groups - 1], groups);
+                log_output(sample);
+            }
             std::uint32_t x = 0;
             for (UINT g = 0; g < groups; ++g)
                 x ^= partials[g];

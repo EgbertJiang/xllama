@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 #include "inference-bridge.h"
+#ifdef XLLAMA_USE_LLAMA
+    #include "xllama/ggml_d3d12.h"
+#endif
 
 #include "xllama/chat_prompt.h"
 #include "xllama/device_train.h"
@@ -226,6 +229,7 @@ void main_loop() {
     // column — a row that does not carry the variable under study is not
     // interpretable (the Phase 12 lesson, twice).
     const int bench_ubatch = read_local_int("bench_ubatch.txt", 0);
+    const int bench_gpu_layers = read_local_int("bench_gpu_layers.txt", 0);
     // #171: q8_0 KV cache + flash attention A/B. Host-column tag -kvq8, same
     // rationale as -uN (the CSV schema carries no cache-type column).
     const int bench_kvq8 = read_local_int("bench_kvq8.txt", 0);
@@ -272,7 +276,8 @@ void main_loop() {
     if (bench_ctx > 0)
         params.n_ctx = bench_ctx;
     params.max_length_override = bench_maxlen;
-    params.n_threads = bench_threads;                // 0 = auto; set by bench-xbox-ort.sh
+    params.n_threads = bench_threads; // 0 = auto; set by bench-xbox-ort.sh
+    params.n_gpu_layers = bench_gpu_layers;
     params.n_ubatch = bench_ubatch;                  // #172: 0 = llama default (512)
     params.kv_q8 = bench_kvq8 != 0;                  // #171: q8_0 KV + flash attention
     params.prompt_lookup = bench_prompt_lookup != 0; // #210 W2
@@ -454,7 +459,15 @@ void run_gpubw() {
 #ifdef XLLAMA_UWP
     log_output("[xllama] gpubw: measuring GPU STREAM bandwidth (own CS, no Agility)\n");
     // ~1 GiB default (issue #211). If alloc fails, measure_gpubw reports error.
-    const ::xllama::GpubwResult r = ::xllama::measure_gpubw(::xllama::kGpubwDefaultBufferBytes, 3);
+    std::size_t buffer_bytes = ::xllama::kGpubwDefaultBufferBytes;
+    FILE* knob = _wfopen(utf8_to_wstring(resolve_local_path("gpubw-buffer-mb.txt")).c_str(), L"r");
+    if (knob) {
+        unsigned mb = 0;
+        if (fscanf(knob, "%u", &mb) == 1 && mb >= 1 && mb <= 1024)
+            buffer_bytes = static_cast<std::size_t>(mb) * 1024 * 1024;
+        fclose(knob);
+    }
+    const ::xllama::GpubwResult r = ::xllama::measure_gpubw(buffer_bytes, 3);
 
     char lb[320];
     snprintf(lb, sizeof(lb),
@@ -592,6 +605,46 @@ void run_gpugemv() {
 // is to approach the point where the OS stops cooperating, so a buffered write
 // would lose the last — and most informative — rows to a PLM kill.
 // ---------------------------------------------------------------------------
+
+void run_d3d12_selftest() {
+#if defined(XLLAMA_UWP) && defined(XLLAMA_USE_LLAMA)
+    log_output("[xllama] d3d12be: backend selftest (Q4_0/Q4_K/Q6_K vs ggml dequant)\n");
+    std::vector<::xllama::D3d12SelftestRow> rows;
+    ::xllama::run_d3d12_selftest(&rows);
+    const std::string csv = resolve_local_path("d3d12be-result.csv");
+    FILE* fp = _wfopen(utf8_to_wstring(csv).c_str(), L"w");
+    if (fp)
+        fputs(::xllama::d3d12_selftest_csv_header(), fp);
+    int ok = 0;
+    for (const auto& r : rows) {
+        if (fp)
+            fputs(::xllama::format_d3d12_selftest_row(r, "xbox-one-s").c_str(), fp);
+        ok += r.ok ? 1 : 0;
+        char lb[320];
+        snprintf(lb, sizeof(lb),
+                 "[xllama] d3d12be: %s n=%d k=%d ncols=%d rel_err=%.3g gpu_ms=%.4f gbs=%.2f "
+                 "ok=%d err=%s\n",
+                 r.type.c_str(), r.n, r.k, r.ncols, r.rel_err, r.gpu_ms, r.packed_gbs, r.ok ? 1 : 0,
+                 r.error.empty() ? "-" : r.error.c_str());
+        log_output(lb);
+    }
+    if (fp) {
+        fflush(fp);
+        fclose(fp);
+    }
+    FILE* done =
+        _wfopen(utf8_to_wstring(resolve_local_path("d3d12be-result.csv.done")).c_str(), L"w");
+    if (done) {
+        fputs("done\n", done);
+        fclose(done);
+    }
+    char lb[96];
+    snprintf(lb, sizeof(lb), "[xllama] d3d12be: %d/%zu cases ok\n", ok, rows.size());
+    log_output(lb);
+#elif defined(XLLAMA_UWP)
+    log_output("[xllama] d3d12be: this package has no llama.cpp backend\n");
+#endif
+}
 
 void run_ramceil() {
 #ifdef XLLAMA_UWP

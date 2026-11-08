@@ -63,9 +63,8 @@ class ModelDownloader {
 // means the model cannot be auto-downloaded (USB/Device-Portal provisioning only).
 // kind selects the consumer AND the backend: "ort-genai" (default, chat picker,
 // ORT GenAI backend), "diffusion" (image dialog; hidden from the chat picker), or
-// "gguf" (chat picker, llama.cpp backend). The gguf path is CPU-only on Xbox (no
-// EP routing — llama.cpp UWP build is CPU-only) but KV-reuse IS enabled via a
-// persistent llama_context (turn-2 prefill 4.07×, see docs/benchmarks.md).
+// "gguf" (chat picker, llama.cpp backend). GGUF uses CPU by default; optional
+// gpu_layers enables experimental native D3D12 weight matrix offload.
 struct ManifestEntry {
     std::wstring name;
     std::wstring display;
@@ -79,6 +78,8 @@ struct ManifestEntry {
     // Optional session context size (0 = kDefaultNCtx). Coding models use 4096.
     // Clamped by resolve_n_ctx() at session open (routing_policy.h).
     int n_ctx = 0;
+    // Experimental GGUF D3D12 layers (0 = CPU, 999 = all eligible layers).
+    int gpu_layers = 0;
     // Optional Max-new-tokens default when the user (or autopilot) selects this
     // model (0 = leave the UI/settings value alone). Thinking models ship 1024
     // so a short CoT+answer fits more often than the global UI default 512 (#223).

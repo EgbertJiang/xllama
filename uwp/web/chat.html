@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Xbox 对话</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172433;background:#f7f8fa;font-size:14px;--blue:#2563eb;--line:#e1e5eb;--muted:#637083;--red:#b42318}
+*{box-sizing:border-box}body{margin:0}button,select,textarea,input{font:inherit}button,select,input{height:36px;border:1px solid var(--line);border-radius:6px;background:white;color:inherit;padding:0 12px}button{cursor:pointer}button:hover{background:#f1f5fa}button:disabled,select:disabled,input:disabled{opacity:.5;cursor:default}button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.primary{background:var(--blue);border-color:var(--blue);color:white}.primary:hover{background:#1d4ed8}.shell{max-width:1120px;margin:0 auto;height:100dvh;min-height:600px;display:flex;flex-direction:column;background:white;border-left:1px solid var(--line);border-right:1px solid var(--line)}header{padding:22px 32px 18px;border-bottom:1px solid var(--line)}.heading{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:25px;letter-spacing:-.6px;margin:0;font-weight:600}.status{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:13px}.dot{width:7px;height:7px;border-radius:50%;background:#96a1b0}.online .dot{background:#2a8c60}.offline .dot{background:var(--red)}.toolbar{display:flex;align-items:center;gap:10px;margin-top:20px;flex-wrap:wrap}label{color:var(--muted);font-size:13px}select{min-width:260px;max-width:400px}#limit{width:82px}.spacer{flex:1}.hint{font-size:12px;color:var(--muted);margin:12px 0 0;line-height:1.6}.notice{margin:12px 32px 0;padding:10px 12px;background:#fff5f4;border:1px solid #f2cdca;border-radius:6px;color:var(--red);line-height:1.6}.notice[hidden]{display:none}main{overflow-y:auto;flex:1;min-height:100px;padding:30px 46px}.empty{color:var(--muted);padding-top:22px;text-align:center;line-height:1.8}.message{margin:0 0 29px}.meta{display:flex;align-items:center;gap:12px;margin-bottom:9px;font-size:12px;color:var(--muted)}.role{font-weight:600;color:#39485c}.message.user{background:#f5f7fa;padding:16px 19px;border-radius:8px}.content{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.85;font-size:15px}.stats{font-size:12px;color:var(--muted);margin-top:9px}.inline{padding:0;height:24px;border:0;background:transparent;color:var(--blue);font-size:12px}.inline:hover{background:transparent;text-decoration:underline}.failed .content{color:var(--red);font-size:14px}.waiting .content{color:var(--muted)}footer{border-top:1px solid var(--line);padding:20px 32px 18px;background:#fff}.composer{border:1px solid #cbd3df;border-radius:8px;padding:12px}.composer:focus-within{border-color:var(--blue)}textarea{resize:vertical;display:block;width:100%;min-height:76px;max-height:230px;padding:0;border:0;outline:none!important;line-height:1.65;background:white;color:inherit}.compose-actions{display:flex;align-items:center;gap:10px;margin-top:10px}#activity{font-size:12px;color:var(--muted);flex:1}.footnote{font-size:12px;color:var(--muted);margin:10px 0 0;line-height:1.6}dialog{border:1px solid var(--line);border-radius:10px;max-width:420px;padding:24px}dialog::backdrop{background:#17243355}dialog h2{margin:0 0 12px;font-size:18px}dialog p{color:var(--muted);line-height:1.7}.dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+<div class="heading"><h1>Xbox 对话</h1><div id="connection" class="status" role="status"><span class="dot"></span><span id="connectionText">检查连接中</span></div></div>
+<div class="toolbar">
+<label for="model">模型</label><select id="model" aria-label="模型"><option value="">加载模型中</option></select>
+<button id="refresh" type="button">刷新连接</button><span class="spacer"></span>
+<label for="limit">回答上限</label><input id="limit" type="number" min="16" max="256" step="16" value="128" aria-label="回答 token 上限"><span class="hint" style="margin:0">token</span>
+<button id="clear" type="button">清空对话</button>
+</div>
+<p class="hint">推理在 Xbox 上执行。切换模型后，首次回答可能需要额外加载时间。</p>
+</header>
+<div id="notice" class="notice" role="alert" hidden></div>
+<main id="messages" aria-label="对话记录"></main>
+<footer>
+<form id="chatForm">
+<div class="composer">
+<label for="prompt" class="hint" style="display:block;margin:0 0 8px">消息</label>
+<textarea id="prompt" placeholder="输入文字，Enter 发送，Shift + Enter 换行" maxlength="12000"></textarea>
+<div class="compose-actions"><span id="activity" role="status">就绪</span><button id="cancelEdit" type="button" hidden>取消修改</button><button id="send" class="primary" type="submit">发送</button></div>
+</div>
+</form>
+<p class="footnote">对话与草稿保存在当前浏览器。回答整段返回；关闭页面不会中止 Xbox 计算。长对话可能省略较早内容。</p>
+</footer>
+</div>
+<dialog id="clearDialog"><h2>清空当前对话</h2><p>删除此浏览器保存的对话和草稿，不影响 Xbox 上的模型文件。</p><div class="dialog-actions"><button id="keep" type="button">取消</button><button id="confirmClear" class="primary" type="button">清空</button></div></dialog>
+<script>
+'use strict';
+const CONFIG = {storageKey:'xllama.lan-chat.v1', routes:{models:'/v1/models',chat:'/v1/chat/completions'}, defaultLimit:128, requestTimeoutMs:300000};
+const el = Object.fromEntries(['connection','connectionText','model','refresh','limit','clear','notice','messages','chatForm','prompt','activity','cancelEdit','send','clearDialog','keep','confirmClear'].map(id=>[id,document.getElementById(id)]));
+let state={version:1,model:'',messages:[],draft:'',limit:CONFIG.defaultLimit,editIndex:null};
+let busy=false,connected=false,conflict=false,storageBroken=false,lastRaw=null,available=[],started=0,clock=null;
+function notify(text){el.notice.textContent=text;el.notice.hidden=!text;}
+function restore(raw){
+ if(!raw)return;
+ const value=JSON.parse(raw);
+ if(value.version!==1||!Array.isArray(value.messages))throw new Error('记录格式无法识别');
+ state={...state,model:typeof value.model==='string'?value.model:'',draft:typeof value.draft==='string'?value.draft:'',limit:Number.isInteger(value.limit)&&value.limit>=16&&value.limit<=256?value.limit:CONFIG.defaultLimit,messages:value.messages.filter(m=>m&&['user','assistant'].includes(m.role)&&typeof m.content==='string').map(m=>({...m,status:m.status==='pending'?'interrupted':m.status})),editIndex:Number.isInteger(value.editIndex)?value.editIndex:null};
+ if(state.editIndex!==null&&(state.editIndex<0||state.editIndex>=state.messages.length||state.messages[state.editIndex].role!=='user'))state.editIndex=null;
+}
+try{lastRaw=localStorage.getItem(CONFIG.storageKey);restore(lastRaw);}catch{storageBroken=true;notify('无法读取本地记录，已暂停自动保存。现有浏览器数据未被覆盖。');}
+function save(){
+ if(conflict||storageBroken)return;
+ try{
+  if(localStorage.getItem(CONFIG.storageKey)!==lastRaw){conflict=true;notify('另一标签页已修改对话。当前内容暂未保存，请复制需要的文字后刷新页面。');return;}
+  const raw=JSON.stringify({...state,savedAt:new Date().toISOString()});localStorage.setItem(CONFIG.storageKey,raw);lastRaw=raw;
+ }catch{storageBroken=true;notify('浏览器保存失败。当前内容仅保留在此页面，请复制后再关闭。');}
+}
+function syncInputs(){el.prompt.value=state.draft;el.limit.value=state.limit;el.cancelEdit.hidden=state.editIndex===null;}
+function setControls(){el.send.disabled=busy||!connected||!state.model||!state.draft.trim();el.model.disabled=busy||!available.length;el.refresh.disabled=busy;el.clear.disabled=busy||(!state.messages.length&&!state.draft);el.limit.disabled=busy;el.prompt.disabled=busy;el.cancelEdit.disabled=busy;el.cancelEdit.hidden=state.editIndex===null;el.send.textContent=busy?'等待回答…':'发送';}
+function node(tag,className,text){const n=document.createElement(tag);n.className=className;if(text!==undefined)n.textContent=text;return n;}
+function edit(index){if(busy)return;state.editIndex=index;state.draft=state.messages[index].content;syncInputs();save();render();el.prompt.focus();}
+function render(){
+ const bottom=el.messages.scrollHeight-el.messages.scrollTop-el.messages.clientHeight<100;
+ el.messages.replaceChildren();
+ if(!state.messages.length)el.messages.append(node('div','empty','输入消息开始对话。'));
+ const lastUser=state.messages.map(m=>m.role).lastIndexOf('user');
+ state.messages.forEach((m,i)=>{
+  const article=node('article','message '+m.role+(m.status==='pending'?' waiting':m.status==='failed'||m.status==='interrupted'?' failed':''));
+  const meta=node('div','meta');meta.append(node('span','role',m.role==='user'?'提问':'Xbox'));if(m.model)meta.append(node('span','',m.model));
+  if(m.role==='user'&&i===lastUser&&!busy){const b=node('button','inline','修改 / 重试');b.type='button';b.onclick=()=>edit(i);meta.append(b);}
+  article.append(meta);
+  let content=m.content;if(m.status==='pending')content='正在生成，等待完整回答…';if(m.status==='interrupted')content='页面曾中断，未确认此次结果。Xbox 可能仍在计算；稍后可修改提问并重试。';
+  article.append(node('div','content',content));if(m.usage)article.append(node('div','stats',`${m.usage.completion_tokens} token · ${m.seconds.toFixed(1)} 秒（含请求与加载）${m.finishReason==='length'?' · 已达回答上限':''}`));
+  el.messages.append(article);
+ });
+ if(bottom||busy)el.messages.scrollTop=el.messages.scrollHeight;
+ if(!busy)el.activity.textContent=state.editIndex===null?'就绪':'修改上一条提问；发送后替换对应回答';setControls();
+}
+async function jsonRequest(path,options={},timeout=10000){
+ const response=await fetch(path,{...options,signal:AbortSignal.timeout(timeout),cache:'no-store'});
+ const result=await response.json();if(!response.ok)throw new Error(result.error?.message||result.error||`HTTP ${response.status}`);return result;
+}
+async function refresh(){
+ if(busy)return;el.connectionText.textContent='检查连接中';el.refresh.disabled=true;
+ try{
+  const result=await jsonRequest(CONFIG.routes.models);available=(result.data||[]).filter(m=>typeof m.id==='string'&&!/^(tiny-|op-|matmul|mulreduce|add-fp|gemm|primitive-)/.test(m.id));
+  el.model.replaceChildren();available.forEach(m=>{const option=node('option','',m.id);option.value=m.id;el.model.append(option);});
+  if(!available.some(m=>m.id===state.model)){state.model=(available.find(m=>m.active)||available[0])?.id||'';save();}
+  el.model.value=state.model;connected=true;el.connection.className='status online';el.connectionText.textContent=available.length?'Xbox 已连接':'已连接 · 未发现模型';
+ }catch(error){connected=false;el.connection.className='status offline';el.connectionText.textContent='Xbox 连接失败';notify(`无法连接：${error.message}。请保持 Xbox 开机，并让 xllama 停留在前台。`);}
+ setControls();
+}
+async function send(event){
+ event.preventDefault();if(busy||!connected||!state.draft.trim()||!state.model)return;
+ const limit=Number(el.limit.value);if(!Number.isInteger(limit)||limit<16||limit>256){notify('回答上限须为 16 至 256 的整数。');return;}
+ const text=state.draft.trim();const history=state.messages.slice(0,state.editIndex??state.messages.length);const messages=[];
+ for(let i=0;i<history.length-1;i++)if(history[i].role==='user'&&history[i+1].role==='assistant'&&history[i+1].status==='complete'){messages.push({role:'user',content:history[i].content},{role:'assistant',content:history[i+1].content});i++;}
+ const requestMessages=[...messages,{role:'user',content:text}];state.messages=history;state.limit=limit;
+ const userIndex=state.messages.length;state.messages.push({role:'user',content:text});const answer={role:'assistant',content:'',status:'pending',model:state.model};state.messages.push(answer);state.editIndex=null;
+ busy=true;started=performance.now();save();render();clock=setInterval(()=>{el.activity.textContent=`正在生成 · ${Math.floor((performance.now()-started)/1000)} 秒`;},500);
+ try{
+  const result=await jsonRequest(CONFIG.routes.chat,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:state.model,messages:requestMessages,max_tokens:limit,temperature:0.3,stream:false})},CONFIG.requestTimeoutMs);
+  const choice=result.choices?.[0];if(typeof choice?.message?.content!=='string'||!choice.message.content.trim())throw new Error('模型未返回文字，可重试或切换模型');
+  Object.assign(answer,{content:choice.message.content,status:'complete',usage:result.usage,seconds:(performance.now()-started)/1000,finishReason:choice.finish_reason});state.draft='';state.editIndex=null;
+ }catch(error){answer.content=`请求未完成：${error.message}。可修改提问后重试；网络中断或超时不会中止 Xbox 计算。`;answer.status='failed';state.editIndex=userIndex;}
+ finally{clearInterval(clock);busy=false;save();syncInputs();render();el.prompt.focus();}
+}
+el.chatForm.addEventListener('submit',send);el.prompt.addEventListener('input',()=>{state.draft=el.prompt.value;save();setControls();});
+el.prompt.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();el.chatForm.requestSubmit();}});
+el.model.addEventListener('change',()=>{state.model=el.model.value;save();});el.limit.addEventListener('change',()=>{const n=Number(el.limit.value);if(Number.isInteger(n)&&n>=16&&n<=256){state.limit=n;save();}});
+el.refresh.onclick=()=>{if(!storageBroken&&!conflict)notify('');refresh();};el.clear.onclick=()=>el.clearDialog.showModal();el.keep.onclick=()=>el.clearDialog.close();
+el.confirmClear.onclick=()=>{state.messages=[];state.draft='';state.editIndex=null;save();syncInputs();render();el.clearDialog.close();el.prompt.focus();};
+el.cancelEdit.onclick=()=>{state.editIndex=null;state.draft='';save();syncInputs();render();};
+window.addEventListener('storage',event=>{if(event.key!==CONFIG.storageKey)return;if(busy){conflict=true;notify('另一标签页已修改对话。本次回答仍会显示，但不会覆盖另一页的记录。请复制需要的文字后刷新。');return;}try{state={version:1,model:'',messages:[],draft:'',limit:CONFIG.defaultLimit,editIndex:null};lastRaw=event.newValue;restore(lastRaw);syncInputs();el.model.value=state.model;render();}catch{storageBroken=true;notify('另一标签页保存的记录无法读取，已暂停自动保存。');}});
+syncInputs();render();refresh();
+</script>
+</body>
+</html>

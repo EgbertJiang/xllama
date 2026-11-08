@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- Series S/X use AVX2. Baseline is an experimental x64 build for CPUs
+         without AVX2/BMI2, including Xbox One S; console validation is required. -->
+    <XllamaCpuTarget Condition="'$(XllamaCpuTarget)' == ''">AVX2</XllamaCpuTarget>
+    <XllamaArchOption Condition="'$(XllamaCpuTarget)' == 'AVX2'">/arch:AVX2</XllamaArchOption>
+    <XllamaArchOption Condition="'$(XllamaCpuTarget)' == 'AVX'">/arch:AVX</XllamaArchOption>
+    <XllamaArchOption Condition="'$(XllamaCpuTarget)' == 'Baseline'"></XllamaArchOption>
+  </PropertyGroup>
+</Project>

@@ -3,7 +3,9 @@
 
 #include "xllama/path_utils.h"
 #include "xllama/platform.h"
+#include "xllama/utf8_utils.h"
 
+#include <cstdio>
 #include <filesystem>
 
 #ifdef XLLAMA_UWP
@@ -85,6 +87,35 @@ static bool dir_is_valid_model(const std::wstring& dir_w) {
     return dir_contains_any_gguf(dir_w);
 }
 
+std::string resolve_models_directory() {
+    static const std::string root = [] {
+        const std::string fallback = local_folder_path("models", nullptr);
+    #ifndef XLLAMA_STORE_SKU
+        const std::wstring config = utf8_to_wstring(local_folder_path("models-root.txt", nullptr));
+        FILE* file = _wfopen(config.c_str(), L"rb");
+        if (!file)
+            return fallback;
+        char buffer[4096] = {};
+        const size_t size = fread(buffer, 1, sizeof(buffer), file);
+        fclose(file);
+        std::string configured(buffer, size);
+        const auto last = configured.find_last_not_of(" \t\r\n");
+        configured = last == std::string::npos ? "" : configured.substr(0, last + 1);
+        if (size == sizeof(buffer) || configured.find('\0') != std::string::npos ||
+            configured.find_first_of("\r\n") != std::string::npos ||
+            !std::filesystem::path(utf8_to_wstring(configured)).is_absolute()) {
+            log_output("[xllama] invalid models-root.txt; using default model directory\n");
+            return fallback;
+        }
+        log_output("[xllama] configured model directory: " + configured + "\n");
+        return configured;
+    #else
+        return fallback;
+    #endif
+    }();
+    return root;
+}
+
 std::string resolve_model_path(const std::string& filename) {
     // An already-absolute path is fully resolved — pass it through unchanged.
     // The device-train evaluate stage loads its merged GGUF by an absolute
@@ -100,7 +131,7 @@ std::string resolve_model_path(const std::string& filename) {
         return filename;
 
     // Primary: LocalFolder\models\<filename>  (user-placed or WDP-uploaded or catalogue download)
-    std::string primary = local_folder_path(filename, L"models");
+    std::string primary = resolve_models_directory() + "\\" + filename;
 
     // Accept a directory if it contains either genai_config.json (ORT GenAI)
     // or at least one *.gguf (llama.cpp / GGUF catalogue entries).
@@ -117,6 +148,11 @@ std::string resolve_model_path(const std::string& filename) {
 
     if (!primary_w_for_check.empty() && dir_is_valid_model(primary_w_for_check))
         return primary; // model found in LocalFolder (ORT or GGUF)
+
+    // Moving the writable root must not hide previously provisioned models.
+    const std::string legacy = local_folder_path(filename, L"models");
+    if (legacy != primary && dir_is_valid_model(utf8_to_wstring(legacy)))
+        return legacy;
 
     try {
         using winrt::Windows::ApplicationModel::Package;
@@ -237,6 +273,10 @@ std::string resolve_local_path(const std::string& filename) {
 }
 
 #else // Linux
+
+std::string resolve_models_directory() {
+    return "models";
+}
 
 std::string resolve_model_path(const std::string& filename) {
     return filename;

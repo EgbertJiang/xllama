@@ -362,6 +362,7 @@ InferenceResult run_inference_ort(const InferenceParams& params) {
     #include "llama.h"
 
     #include "decode_loop.h"
+    #include "llama_gpu.h"
     #include "sampler_chain.h" // shared sampler chain (#125); needs llama.h
     #include "xllama/llama_raii.h"
 
@@ -372,6 +373,11 @@ namespace detail {
 
 InferenceResult run_inference_llama(const InferenceParams& params) {
     InferenceResult res;
+    #ifdef XLLAMA_UWP
+    // AppContainer stderr is not visible in Device Portal. Keep the actual
+    // loader error in the application log instead of only a generic failure.
+    llama_log_set([](ggml_log_level, const char* text, void*) { log_output(text); }, nullptr);
+    #endif
 
     // Catalogue GGUF entries resolve to the model DIRECTORY; llama loads a file.
     std::string lora_base;
@@ -388,7 +394,8 @@ InferenceResult run_inference_llama(const InferenceParams& params) {
     }
 
     llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 0; // CPU only on Linux path
+    const int applied_gpu_layers =
+        apply_gguf_gpu_layers(params.n_gpu_layers, mparams, abs_model_path);
 
     if (params.on_status)
         params.on_status("loading model");
@@ -445,12 +452,17 @@ InferenceResult run_inference_llama(const InferenceParams& params) {
         log_output("[xllama] KV cache: q8_0 + flash attention (#171)\n");
     }
 
+    GgufCpuThreadpools gpu_cpu_threads;
+    apply_gguf_gpu_context(applied_gpu_layers, cparams,
+                           gguf_gpu_outputs_max(false, params.prompt_lookup));
     llama_context* raw_ctx = llama_init_from_model(model.get(), cparams);
     if (!raw_ctx && params.kv_q8) {
         log_output("[xllama] q8_0 KV context failed — falling back to default cache types\n");
         cparams.type_k = llama_context_default_params().type_k;
         cparams.type_v = llama_context_default_params().type_v;
         cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
+        apply_gguf_gpu_context(applied_gpu_layers, cparams,
+                               gguf_gpu_outputs_max(false, params.prompt_lookup));
         raw_ctx = llama_init_from_model(model.get(), cparams);
     }
     if (!raw_ctx) {
@@ -459,6 +471,7 @@ InferenceResult run_inference_llama(const InferenceParams& params) {
         return res;
     }
     LlamaContextPtr ctx(raw_ctx);
+    gpu_cpu_threads.attach(applied_gpu_layers, ctx.get(), n_threads, cparams.n_threads_batch);
 
     if (adapter) {
         llama_adapter_lora* arr[1] = {adapter.get()};
